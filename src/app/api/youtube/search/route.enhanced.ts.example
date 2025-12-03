@@ -1,0 +1,133 @@
+// 개선된 버전 - Rate Limiting과 에러 처리 강화
+// 이 파일은 예시입니다. 적용하려면 route.ts 파일을 이 내용으로 교체하세요.
+
+import { NextRequest, NextResponse } from 'next/server';
+import { youtubeService } from '@/lib/youtube';
+import { youtubeApiRateLimiter } from '@/lib/rateLimit';
+import { cache } from '@/lib/cache';
+
+function getClientIdentifier(request: NextRequest): string {
+  // IP 주소 기반 식별
+  const forwarded = request.headers.get('x-forwarded-for');
+  const realIp = request.headers.get('x-real-ip');
+  const ip = forwarded?.split(',')[0] || realIp || 'unknown';
+  
+  // User-Agent도 포함하여 더 정확한 식별
+  const userAgent = request.headers.get('user-agent') || '';
+  return `${ip}:${userAgent.substring(0, 50)}`;
+}
+
+function getCacheKey(
+  query: string,
+  exerciseType: string | null,
+  category: string | null,
+  maxResults: number
+): string {
+  return `youtube:${query}:${exerciseType || ''}:${category || ''}:${maxResults}`;
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    // Rate Limiting 체크
+    const identifier = getClientIdentifier(request);
+    const rateLimitCheck = youtubeApiRateLimiter.check(identifier);
+
+    if (!rateLimitCheck.allowed) {
+      return NextResponse.json(
+        {
+          error: 'Too many requests',
+          message: 'API rate limit exceeded. Please try again later.',
+          resetAt: new Date(rateLimitCheck.resetAt).toISOString(),
+        },
+        {
+          status: 429,
+          headers: {
+            'Retry-After': String(Math.ceil((rateLimitCheck.resetAt - Date.now()) / 1000)),
+            'X-RateLimit-Limit': '10',
+            'X-RateLimit-Remaining': String(rateLimitCheck.remaining),
+            'X-RateLimit-Reset': String(rateLimitCheck.resetAt),
+          },
+        }
+      );
+    }
+
+    const searchParams = request.nextUrl.searchParams;
+    const query = searchParams.get('q') || '';
+    const exerciseType = searchParams.get('type');
+    const category = searchParams.get('category');
+    const maxResults = parseInt(searchParams.get('max') || '10');
+
+    // 캐시 키 생성
+    const cacheKey = getCacheKey(query, exerciseType, category, maxResults);
+
+    // 캐시 확인
+    const cachedVideos = cache.get<any[]>(cacheKey);
+    if (cachedVideos) {
+      return NextResponse.json(
+        { videos: cachedVideos, cached: true },
+        {
+          status: 200,
+          headers: {
+            'X-RateLimit-Limit': '10',
+            'X-RateLimit-Remaining': String(rateLimitCheck.remaining),
+          },
+        }
+      );
+    }
+
+    // YouTube API 호출
+    let videos;
+
+    if (category) {
+      videos = await youtubeService.getStretchingByCategory(category, maxResults);
+    } else if (exerciseType) {
+      videos = await youtubeService.getStretchingByExerciseType(exerciseType);
+    } else if (query) {
+      videos = await youtubeService.searchStretchingShorts(query, maxResults);
+    } else {
+      videos = await youtubeService.getTrendingStretching();
+    }
+
+    // 캐시에 저장 (1시간)
+    cache.set(cacheKey, videos, 60 * 60 * 1000);
+
+    return NextResponse.json(
+      { videos, cached: false },
+      {
+        status: 200,
+        headers: {
+          'X-RateLimit-Limit': '10',
+          'X-RateLimit-Remaining': String(rateLimitCheck.remaining),
+        },
+      }
+    );
+  } catch (error: any) {
+    console.error('YouTube API Error:', error);
+
+    // API 키 관련 오류는 상세 정보 노출하지 않음
+    if (error?.message?.includes('API key') || error?.message?.includes('keyInvalid')) {
+      return NextResponse.json(
+        { error: 'Service temporarily unavailable' },
+        { status: 503 }
+      );
+    }
+
+    // 할당량 초과 오류
+    if (error?.message?.includes('quota') || error?.code === 403) {
+      return NextResponse.json(
+        {
+          error: 'Service temporarily unavailable',
+          message: 'API quota exceeded. Please try again later.',
+        },
+        { status: 503 }
+      );
+    }
+
+    return NextResponse.json(
+      { error: 'Failed to fetch videos' },
+      { status: 500 }
+    );
+  }
+}
+
+

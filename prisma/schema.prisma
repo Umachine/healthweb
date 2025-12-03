@@ -1,0 +1,82 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// 자체 스트레칭 영상 데이터
+model StretchingVideo {
+  id            String   @id @default(uuid())
+  youtubeId     String?  // YouTube 영상 ID (있을 경우)
+  title         String
+  description   String
+  thumbnailUrl  String
+  videoUrl      String   // YouTube URL 또는 자체 호스팅 URL
+  duration      Int      // 초 단위
+  category      String   // 운동 종류 (running, cycling, etc.)
+  difficulty    String   // beginner, intermediate, advanced
+  bodyParts     String[] // 운동 부위 배열
+  tags          String[]
+  viewCount     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([category])
+  @@index([difficulty])
+}
+
+// 사용자 운동 기록
+model ExerciseRecord {
+  id            String   @id @default(uuid())
+  userId        String
+  exerciseType  String
+  stretchingId  String?  // 수행한 스트레칭 ID
+  duration      Int      // 운동 시간 (분)
+  date          DateTime @default(now())
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  @@index([userId, date])
+}
+
+// 알림 설정
+model AlertSetting {
+  id            String   @id @default(uuid())
+  userId        String   @unique
+  enabled       Boolean  @default(true)
+  time          String   // HH:mm 형식
+  days          String[] // 요일 배열 ["월", "화", "수"]
+  exerciseTypes String[] // 알림 받을 운동 종류
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// Q&A 상담
+model QnA {
+  id            String   @id @default(uuid())
+  userId        String
+  trainerId     String?
+  question      String
+  answer        String?
+  category      String   // 재활, 근성장, 등
+  status        String   @default("pending") // pending, answered, completed
+  isFree        Boolean  @default(false) // 무료 쿠폰 사용 여부
+  createdAt     DateTime @default(now())
+  answeredAt    DateTime?
+}
+
+// 전문가 (트레이너)
+model Trainer {
+  id            String   @id @default(uuid())
+  name          String
+  specialty     String[] // 전문 분야
+  region        String   // 지역
+  rating        Float    @default(0)
+  pricePerMinute Int     // 분당 가격
+  bio           String?
+  createdAt     DateTime @default(now())
+}
+
