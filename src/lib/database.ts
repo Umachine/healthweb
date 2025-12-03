@@ -5,7 +5,7 @@ const globalForPrisma = globalThis as unknown as {
 };
 
 // 프로덕션에서는 error만 로깅, 개발 환경에서는 query, error, warn 모두 로깅
-const logLevel = process.env.NODE_ENV === 'production' 
+const logLevel: ('query' | 'info' | 'warn' | 'error')[] = process.env.NODE_ENV === 'production' 
   ? ['error'] 
   : ['query', 'error', 'warn'];
 
